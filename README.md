@@ -28,7 +28,7 @@ This project uses LLVM MinGW and PowerShell for building to ensure a lightweight
 ### Build Instructions
 1. Clone the repository:
    ```cmd
-   git clone https://github.com/YOUR_USERNAME/fclockon.git
+   git clone https://github.com/axusmotion/fclockon.git
    cd fclockon
    ```
 2. Run the build script in PowerShell:
