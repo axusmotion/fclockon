@@ -1,5 +1,9 @@
 # FClockOn (Windows Clock Widget)
 
+![Desktop Clock](assets/screenshot_desktop.jpg)
+
+![Settings Dialog](assets/screenshot_settings.png)
+
 A beautiful, highly customizable, and lightweight open-source desktop clock widget for Windows, built with C++ and GDI+.
 
 ## Features
