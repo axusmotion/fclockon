@@ -1,0 +1,24 @@
+# Build artifacts
+*.exe
+*.obj
+*.o
+*.lib
+*.dll
+*.exp
+*.pdb
+*.ilk
+*.suo
+*.user
+*.aps
+*.ncb
+*.opendb
+*.db
+
+# Settings and caches
+.vscode/
+.vs/
+.gemini/
+settings.json
+
+# Logs
+*.log
