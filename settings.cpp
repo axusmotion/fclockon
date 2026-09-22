@@ -112,7 +112,15 @@ std::wstring GetConfigDir() {
     std::wstring dir;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appDataPath))) {
         dir = appDataPath;
-        dir += L"\\WindowsClock";
+        std::wstring newDir = dir + L"\\FClockOn";
+        std::wstring oldDir = dir + L"\\WindowsClock";
+        if (GetFileAttributesW(newDir.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            dir = newDir;
+        } else if (GetFileAttributesW(oldDir.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            dir = oldDir;
+        } else {
+            dir = newDir;
+        }
         CoTaskMemFree(appDataPath);
     } else {
         // Fallback to current directory
@@ -171,6 +179,12 @@ void LoadSettings(ClockSettings& settings) {
     settings.autoStart     = cfg.getBool("autoStart", settings.autoStart);
     settings.snapToEdges   = cfg.getBool("snapToEdges", settings.snapToEdges);
     settings.hideDesktopIcons = cfg.getBool("hideDesktopIcons", settings.hideDesktopIcons);
+    settings.todoEnabled   = cfg.getBool("todoEnabled", settings.todoEnabled);
+    settings.todoFontSize  = cfg.getInt("todoFontSize", settings.todoFontSize);
+    settings.todoWidth     = cfg.getInt("todoWidth", settings.todoWidth);
+    settings.todoPosX      = cfg.getInt("todoPosX", settings.todoPosX);
+    settings.todoPosY      = cfg.getInt("todoPosY", settings.todoPosY);
+    settings.todoStyle     = cfg.getInt("todoStyle", settings.todoStyle);
 
     settings.posX          = cfg.getInt("posX", settings.posX);
     settings.posY          = cfg.getInt("posY", settings.posY);
@@ -203,6 +217,12 @@ void SaveSettings(const ClockSettings& settings) {
     cfg.setBool("autoStart", settings.autoStart);
     cfg.setBool("snapToEdges", settings.snapToEdges);
     cfg.setBool("hideDesktopIcons", settings.hideDesktopIcons);
+    cfg.setBool("todoEnabled", settings.todoEnabled);
+    cfg.setInt("todoFontSize", settings.todoFontSize);
+    cfg.setInt("todoWidth", settings.todoWidth);
+    cfg.setInt("todoPosX", settings.todoPosX);
+    cfg.setInt("todoPosY", settings.todoPosY);
+    cfg.setInt("todoStyle", settings.todoStyle);
 
     cfg.setInt("posX", settings.posX);
     cfg.setInt("posY", settings.posY);
@@ -256,4 +276,45 @@ void SetAutoStart(bool enable) {
         RegDeleteValueW(hKey, L"WindowsClock");
     }
     RegCloseKey(hKey);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// TODO Items — simple line-based file ("0|text" or "1|text")
+// ────────────────────────────────────────────────────────────────────
+static std::string GetTodosFilePath() {
+    std::wstring dir = GetConfigDir();
+    dir += L"\\todos.txt";
+    return WideToNarrow(dir);
+}
+
+void LoadTodos(std::vector<TodoItem>& items) {
+    items.clear();
+    std::string path = GetTodosFilePath();
+    std::ifstream file(path);
+    if (!file.is_open()) return;
+
+    std::string line;
+    while (std::getline(file, line) && items.size() < 20) {
+        if (line.size() < 3) continue;  // minimum: "0|x"
+        if (line[1] != '|') continue;
+        bool done = (line[0] == '1');
+        std::string text = line.substr(2);
+        if (text.empty()) continue;
+        TodoItem item;
+        item.done = done;
+        item.text = NarrowToWide(text);
+        items.push_back(std::move(item));
+    }
+    file.close();
+}
+
+void SaveTodos(const std::vector<TodoItem>& items) {
+    std::string path = GetTodosFilePath();
+    std::ofstream file(path);
+    if (!file.is_open()) return;
+
+    for (const auto& item : items) {
+        file << (item.done ? '1' : '0') << '|' << WideToNarrow(item.text) << '\n';
+    }
+    file.close();
 }

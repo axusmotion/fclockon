@@ -62,12 +62,26 @@ struct ClockSettings {
     bool snapToEdges    = true;
     bool hideDesktopIcons = false;
 
+    // TODO widget
+    bool todoEnabled    = false;
+    int todoFontSize    = 20;
+    int todoWidth       = 320;
+    int todoPosX        = -1;  // -1 = auto placement
+    int todoPosY        = -1;
+    int todoStyle       = 0;   // 0 = Matched/Fill, 1 = Glass, 2 = Transparent
+
     // Window position
     int posX            = -1;  // -1 = auto-center
     int posY            = -1;
 
     // Active preset name
     std::wstring presetName = L"Midnight Neon";
+};
+
+// ── TODO Item ──
+struct TodoItem {
+    std::wstring text;
+    bool done = false;
 };
 
 // ── Theme Preset ──
@@ -91,3 +105,5 @@ void            ApplyPreset(ClockSettings& settings, const std::wstring& presetN
 const std::vector<ThemePreset>& GetPresets();
 void            SetAutoStart(bool enable);
 std::wstring    GetConfigDir();
+void            LoadTodos(std::vector<TodoItem>& items);
+void            SaveTodos(const std::vector<TodoItem>& items);

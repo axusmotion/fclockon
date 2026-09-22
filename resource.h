@@ -11,6 +11,10 @@
 #define ID_TRAY_TOGGLE_CLICK    2004
 #define ID_TRAY_PRESET_FIRST    2100
 #define ID_TRAY_PRESET_LAST     2119
+#define ID_TRAY_TODO_STYLE_FIRST 2130
+#define ID_TRAY_TODO_STYLE_FILL  2130
+#define ID_TRAY_TODO_STYLE_GLASS 2131
+#define ID_TRAY_TODO_STYLE_TRANS 2132
 
 // Settings dialog control IDs
 #define IDC_PRESET_COMBO        3001
@@ -44,6 +48,17 @@
 #define IDC_ALIGN_TR            3029
 #define IDC_ALIGN_BL            3030
 #define IDC_ALIGN_BR            3031
+
+// TODO widget controls
+#define IDC_CHECK_TODO_ENABLED  3032
+#define IDC_TODO_LISTBOX        3033
+#define IDC_TODO_INPUT          3034
+#define IDC_BTN_TODO_ADD        3035
+#define IDC_BTN_TODO_REMOVE     3036
+#define IDC_BTN_TODO_CHECK      3037
+#define IDC_TODO_SIZE_SLIDER    3038
+#define IDC_TODO_SIZE_VALUE     3039
+#define IDC_TODO_STYLE_COMBO    3040
 
 // Custom messages
 #define WM_SETTINGS_CHANGED     (WM_USER + 100)

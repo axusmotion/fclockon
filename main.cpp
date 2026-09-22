@@ -3,6 +3,7 @@
 // Lightweight desktop clock overlay with GDI+ rendering
 //──────────────────────────────────────────────────────────────────────
 #include <windows.h>
+#include <windowsx.h>
 #include <objidl.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -15,24 +16,31 @@
 #include "resource.h"
 #include "settings.h"
 #include "renderer.h"
+#include "todo_renderer.h"
 #include "tray_icon.h"
 #include "settings_dialog.h"
 
 // ── Globals ──
 static HWND           g_hwnd          = nullptr;
+static HWND           g_hwndTodo      = nullptr;
 static ClockSettings  g_settings;
 static ClockRenderer  g_renderer;
+static TodoRenderer   g_todoRenderer;
 static TrayIcon       g_trayIcon;
 static ULONG_PTR      g_gdiplusToken  = 0;
 static HANDLE         g_mutex         = nullptr;
 static const UINT_PTR TIMER_CLOCK     = 1;
 static bool           g_settingsOpen  = false;
 static bool           g_iconsHidden   = false;
+static std::vector<TodoItem> g_todos;
 
 // ── Forward declarations ──
 static LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
+static LRESULT CALLBACK TodoWndProc(HWND, UINT, WPARAM, LPARAM);
 static void ApplyWindowStyle();
 static void RefreshClock();
+static void RefreshTodoWindow();
+static void OpenSettings();
 
 // ────────────────────────────────────────────────────────────────────
 // Toggle Desktop Icons (robust Win32 method)
@@ -67,9 +75,15 @@ static void ToggleDesktopIcons(bool hide) {
 // ────────────────────────────────────────────────────────────────────
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     // ── Single instance check ──
-    g_mutex = CreateMutexW(nullptr, TRUE, L"WindowsClockWidgetMutex_v1");
+    g_mutex = CreateMutexW(nullptr, TRUE, L"FClockOnMutex_v1");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         CloseHandle(g_mutex);
+        HWND hExisting = FindWindowW(L"FClockOnClockWidget", nullptr);
+        if (!hExisting) hExisting = FindWindowW(L"WindowsClockWidget", nullptr);
+        if (hExisting) {
+            SetForegroundWindow(hExisting);
+            PostMessageW(hExisting, WM_COMMAND, ID_TRAY_SETTINGS, 0);
+        }
         return 0;
     }
 
@@ -88,43 +102,55 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 
     // ── Load settings ──
     LoadSettings(g_settings);
+    LoadTodos(g_todos);
 
-    // ── Register window class ──
+    // ── Register window classes ──
     WNDCLASSEXW wc = {};
     wc.cbSize        = sizeof(wc);
     wc.style         = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
     wc.lpfnWndProc   = WndProc;
     wc.hInstance      = hInstance;
     wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
-    wc.lpszClassName = L"WindowsClockWidget";
+    wc.lpszClassName = L"FClockOnClockWidget";
     wc.hIcon         = LoadIconW(nullptr, IDI_APPLICATION);
-    wc.hbrBackground = nullptr;  // We render via UpdateLayeredWindow
+    wc.hbrBackground = nullptr;  // Rendered via UpdateLayeredWindow
     RegisterClassExW(&wc);
 
-    // ── Determine initial window position ──
+    WNDCLASSEXW twc = {};
+    twc.cbSize        = sizeof(twc);
+    twc.style         = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+    twc.lpfnWndProc   = TodoWndProc;
+    twc.hInstance      = hInstance;
+    twc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
+    twc.lpszClassName = L"FClockOnTodoWidget";
+    twc.hIcon         = LoadIconW(nullptr, IDI_APPLICATION);
+    twc.hbrBackground = nullptr;
+    RegisterClassExW(&twc);
+
+    // ── Determine initial clock window position ──
     g_renderer.UpdateSettings(g_settings);
     int wndW = 0, wndH = 0;
     g_renderer.GetWindowSize(wndW, wndH);
 
     int posX = g_settings.posX;
     int posY = g_settings.posY;
+    int scrW = GetSystemMetrics(SM_CXSCREEN);
+    int scrH = GetSystemMetrics(SM_CYSCREEN);
     if (posX < 0 || posY < 0) {
         // Auto-center on primary monitor
-        int scrW = GetSystemMetrics(SM_CXSCREEN);
-        int scrH = GetSystemMetrics(SM_CYSCREEN);
         posX = (scrW - wndW) / 2;
         posY = scrH / 6;  // Upper third
     }
 
-    // ── Create the layered window ──
+    // ── Create clock layered window ──
     DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW;
     if (g_settings.alwaysOnTop) exStyle |= WS_EX_TOPMOST;
     if (g_settings.clickThrough) exStyle |= WS_EX_TRANSPARENT;
 
     g_hwnd = CreateWindowExW(
         exStyle,
-        L"WindowsClockWidget",
-        L"Clock",
+        L"FClockOnClockWidget",
+        L"FClockOn",
         WS_POPUP,
         posX, posY, wndW, wndH,
         nullptr, nullptr, hInstance, nullptr
@@ -135,9 +161,37 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         return 1;
     }
 
-    // ── Initialize renderer and tray icon ──
+    // ── Create TODO widget window ──
+    g_todoRenderer.UpdateSettings(g_settings);
+    g_todoRenderer.SetTodoItems(g_todos);
+    int todoW = 0, todoH = 0;
+    g_todoRenderer.GetWindowSize(todoW, todoH);
+
+    int todoX = g_settings.todoPosX;
+    int todoY = g_settings.todoPosY;
+    if (todoX < 0 || todoY < 0) {
+        todoX = (scrW - todoW) - 40;
+        todoY = 60;
+    }
+
+    g_hwndTodo = CreateWindowExW(
+        exStyle,
+        L"FClockOnTodoWidget",
+        L"FClockOn Tasks",
+        WS_POPUP,
+        todoX, todoY, todoW, todoH,
+        nullptr, nullptr, hInstance, nullptr
+    );
+
+    // ── Initialize renderers and tray icon ──
     g_renderer.Initialize(g_hwnd);
     g_renderer.UpdateSettings(g_settings);
+
+    if (g_hwndTodo) {
+        g_todoRenderer.Initialize(g_hwndTodo);
+        g_todoRenderer.UpdateSettings(g_settings);
+        g_todoRenderer.SetTodoItems(g_todos);
+    }
 
     g_trayIcon.Create(g_hwnd, hInstance);
 
@@ -146,13 +200,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
         ToggleDesktopIcons(true);
     }
 
-    // ── Initial render ──
+    // ── Initial renders ──
     RefreshClock();
+    RefreshTodoWindow();
 
-    // ── Show window ──
+    // ── Show windows ──
     ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
 
-    // ── Start timer (1 second) ──
+    // ── Start clock timer (1 second) ──
     SetTimer(g_hwnd, TIMER_CLOCK, 1000, nullptr);
 
     // ── Message loop ──
@@ -169,6 +224,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
     // Restore desktop icons if we hid them
     ToggleDesktopIcons(false);
 
+    if (g_hwndTodo) {
+        DestroyWindow(g_hwndTodo);
+        g_hwndTodo = nullptr;
+    }
+
     Gdiplus::GdiplusShutdown(g_gdiplusToken);
     if (g_mutex) {
         ReleaseMutex(g_mutex);
@@ -182,27 +242,31 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
 // Apply window styles based on current settings
 // ────────────────────────────────────────────────────────────────────
 static void ApplyWindowStyle() {
-    LONG_PTR exStyle = GetWindowLongPtrW(g_hwnd, GWL_EXSTYLE);
+    HWND wnds[] = { g_hwnd, g_hwndTodo };
+    for (HWND h : wnds) {
+        if (!h) continue;
+        LONG_PTR exStyle = GetWindowLongPtrW(h, GWL_EXSTYLE);
 
-    // Always on top
-    if (g_settings.alwaysOnTop) {
-        exStyle |= WS_EX_TOPMOST;
-        SetWindowPos(g_hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    } else {
-        exStyle &= ~WS_EX_TOPMOST;
-        SetWindowPos(g_hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        // Always on top
+        if (g_settings.alwaysOnTop) {
+            exStyle |= WS_EX_TOPMOST;
+            SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        } else {
+            exStyle &= ~WS_EX_TOPMOST;
+            SetWindowPos(h, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+
+        // Click-through
+        if (g_settings.clickThrough) {
+            exStyle |= WS_EX_TRANSPARENT;
+        } else {
+            exStyle &= ~WS_EX_TRANSPARENT;
+        }
+
+        SetWindowLongPtrW(h, GWL_EXSTYLE, exStyle);
     }
-
-    // Click-through
-    if (g_settings.clickThrough) {
-        exStyle |= WS_EX_TRANSPARENT;
-    } else {
-        exStyle &= ~WS_EX_TRANSPARENT;
-    }
-
-    SetWindowLongPtrW(g_hwnd, GWL_EXSTYLE, exStyle);
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -226,6 +290,34 @@ static void RefreshClock() {
 }
 
 // ────────────────────────────────────────────────────────────────────
+// Refresh the TODO widget display
+// ────────────────────────────────────────────────────────────────────
+static void RefreshTodoWindow() {
+    if (!g_hwndTodo) return;
+
+    if (!g_settings.todoEnabled) {
+        ShowWindow(g_hwndTodo, SW_HIDE);
+        return;
+    }
+
+    g_todoRenderer.UpdateSettings(g_settings);
+    g_todoRenderer.SetTodoItems(g_todos);
+
+    int wndW = 0, wndH = 0;
+    g_todoRenderer.GetWindowSize(wndW, wndH);
+
+    RECT rc;
+    GetWindowRect(g_hwndTodo, &rc);
+    if ((rc.right - rc.left) != wndW || (rc.bottom - rc.top) != wndH) {
+        SetWindowPos(g_hwndTodo, nullptr, 0, 0, wndW, wndH,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
+    g_todoRenderer.Render();
+    ShowWindow(g_hwndTodo, SW_SHOWNOACTIVATE);
+}
+
+// ────────────────────────────────────────────────────────────────────
 // Open settings dialog
 // ────────────────────────────────────────────────────────────────────
 static void OpenSettings() {
@@ -233,7 +325,7 @@ static void OpenSettings() {
     g_settingsOpen = true;
 
     ClockSettings prevSettings = g_settings;
-    bool changed = ShowSettingsDialog(g_hwnd, g_settings);
+    bool changed = ShowSettingsDialog(g_hwnd, g_settings, &g_todos);
 
     if (changed) {
         // Handle auto-start change
@@ -248,6 +340,7 @@ static void OpenSettings() {
 
         ApplyWindowStyle();
         RefreshClock();
+        RefreshTodoWindow();
         SaveSettings(g_settings);
     }
 
@@ -255,7 +348,7 @@ static void OpenSettings() {
 }
 
 // ────────────────────────────────────────────────────────────────────
-// Window Procedure
+// Window Procedure — Clock Widget
 // ────────────────────────────────────────────────────────────────────
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
@@ -286,10 +379,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         GetWindowRect(hwnd, &rc);
         g_settings.posX = rc.left;
         g_settings.posY = rc.top;
-        // Keep renderer internal settings in sync so it doesn't snap back on next timer tick
         g_renderer.UpdateSettings(g_settings);
         return 0;
     }
+
+    case WM_EXITSIZEMOVE:
+        SaveSettings(g_settings);
+        return 0;
 
     case WM_MOVING: {
         if (!g_settings.snapToEdges) return FALSE;
@@ -343,7 +439,6 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             OpenSettings();
         }
         else if (id == ID_TRAY_EXIT) {
-            // Save position before exit
             SaveSettings(g_settings);
             PostQuitMessage(0);
         }
@@ -363,8 +458,15 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 const auto& presets = GetPresets();
                 ApplyPreset(g_settings, presets[idx].name);
                 RefreshClock();
+                RefreshTodoWindow();
                 SaveSettings(g_settings);
             }
+        }
+        else if (id >= ID_TRAY_TODO_STYLE_FIRST && id <= ID_TRAY_TODO_STYLE_TRANS) {
+            g_settings.todoStyle = id - ID_TRAY_TODO_STYLE_FIRST;
+            g_todoRenderer.UpdateSettings(g_settings);
+            RefreshTodoWindow();
+            SaveSettings(g_settings);
         }
         else if (id >= IDC_ALIGN_TL && id <= IDC_ALIGN_BR) {
             HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
@@ -394,12 +496,191 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         // Live update from settings dialog "Apply" button
         ApplyWindowStyle();
         RefreshClock();
+        RefreshTodoWindow();
         SaveSettings(g_settings);
         return 0;
 
     case WM_DESTROY:
         SaveSettings(g_settings);
         PostQuitMessage(0);
+        return 0;
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Window Procedure — TODO Widget
+// ────────────────────────────────────────────────────────────────────
+static LRESULT CALLBACK TodoWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+
+    case WM_NCHITTEST: {
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+
+        // Bottom-right corner resize handle (18x18px)
+        if (pt.x >= rc.right - 18 && pt.y >= rc.bottom - 18) {
+            return HTBOTTOMRIGHT;
+        }
+
+        POINT ptClient = pt;
+        ScreenToClient(hwnd, &ptClient);
+
+        // Checkbox hit area: return HTCLIENT for hover feedback, hand cursor, and instant toggle!
+        if (g_todoRenderer.HitTestCheckbox(ptClient.x, ptClient.y) >= 0) {
+            return HTCLIENT;
+        }
+
+        // Entire rest of widget: return HTCAPTION for effortless, silky smooth native dragging!
+        return HTCAPTION;
+    }
+
+    case WM_MOUSEMOVE: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+
+        TRACKMOUSEEVENT tme = {};
+        tme.cbSize = sizeof(tme);
+        tme.dwFlags = TME_LEAVE;
+        tme.hwndTrack = hwnd;
+        TrackMouseEvent(&tme);
+
+        int hitIdx = g_todoRenderer.HitTestCheckbox(x, y);
+        if (hitIdx != g_todoRenderer.GetHoveredIndex()) {
+            g_todoRenderer.SetHoveredIndex(hitIdx);
+            g_todoRenderer.Render();
+        }
+        return 0;
+    }
+
+    case WM_MOUSELEAVE: {
+        if (g_todoRenderer.GetHoveredIndex() != -1) {
+            g_todoRenderer.SetHoveredIndex(-1);
+            g_todoRenderer.Render();
+        }
+        return 0;
+    }
+
+    case WM_NCMOUSEMOVE: {
+        if (g_todoRenderer.GetHoveredIndex() != -1) {
+            g_todoRenderer.SetHoveredIndex(-1);
+            g_todoRenderer.Render();
+        }
+        break;
+    }
+
+    case WM_SETCURSOR: {
+        if (LOWORD(lParam) == HTCLIENT) {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(hwnd, &pt);
+            if (g_todoRenderer.HitTestCheckbox(pt.x, pt.y) >= 0) {
+                SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                return TRUE;
+            }
+        }
+        break;
+    }
+
+    case WM_SIZING: {
+        RECT* prc = reinterpret_cast<RECT*>(lParam);
+        int minW = 220, maxW = 700;
+        int minH = 70;
+        if (prc->right - prc->left < minW) prc->right = prc->left + minW;
+        if (prc->right - prc->left > maxW) prc->right = prc->left + maxW;
+        if (prc->bottom - prc->top < minH) prc->bottom = prc->top + minH;
+
+        g_settings.todoWidth = prc->right - prc->left;
+        g_todoRenderer.UpdateSettings(g_settings);
+        g_todoRenderer.Render();
+        return TRUE;
+    }
+
+    case WM_SIZE: {
+        int w = LOWORD(lParam);
+        if (w >= 220 && w <= 700) {
+            g_settings.todoWidth = w;
+            g_todoRenderer.UpdateSettings(g_settings);
+            g_todoRenderer.Render();
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONDOWN: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+
+        int cbIdx = g_todoRenderer.HitTestCheckbox(x, y);
+        if (cbIdx >= 0 && cbIdx < static_cast<int>(g_todos.size())) {
+            g_todos[cbIdx].done = !g_todos[cbIdx].done;
+            SaveTodos(g_todos);
+            RefreshTodoWindow();
+
+            HWND hDlg = GetSettingsDialogHwnd();
+            if (hDlg && IsWindow(hDlg)) {
+                PostMessageW(hDlg, WM_USER + 101, 0, 0);
+            }
+            return 0;
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONDBLCLK:
+    case WM_NCLBUTTONDBLCLK: {
+        OpenSettings();
+        return 0;
+    }
+
+    case WM_MOVE: {
+        RECT rc;
+        GetWindowRect(hwnd, &rc);
+        g_settings.todoPosX = rc.left;
+        g_settings.todoPosY = rc.top;
+        return 0;
+    }
+
+    case WM_EXITSIZEMOVE:
+        SaveSettings(g_settings);
+        return 0;
+
+    case WM_MOVING: {
+        if (!g_settings.snapToEdges) return FALSE;
+        RECT* prc = reinterpret_cast<RECT*>(lParam);
+        int w = prc->right - prc->left;
+        int h = prc->bottom - prc->top;
+
+        HMONITOR hMon = MonitorFromRect(prc, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi = { sizeof(mi) };
+        if (GetMonitorInfo(hMon, &mi)) {
+            const int snapDist = 20;
+
+            if (abs(prc->left - mi.rcWork.left) < snapDist) {
+                prc->left = mi.rcWork.left;
+                prc->right = prc->left + w;
+            } else if (abs(prc->right - mi.rcWork.right) < snapDist) {
+                prc->right = mi.rcWork.right;
+                prc->left = prc->right - w;
+            }
+
+            if (abs(prc->top - mi.rcWork.top) < snapDist) {
+                prc->top = mi.rcWork.top;
+                prc->bottom = prc->top + h;
+            } else if (abs(prc->bottom - mi.rcWork.bottom) < snapDist) {
+                prc->bottom = mi.rcWork.bottom;
+                prc->top = prc->bottom - h;
+            }
+        }
+        return TRUE;
+    }
+
+    case WM_RBUTTONUP:
+    case WM_NCRBUTTONUP:
+        g_trayIcon.ShowContextMenu(g_hwnd, g_settings);
+        return 0;
+
+    case WM_DESTROY:
         return 0;
     }
 

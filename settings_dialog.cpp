@@ -26,7 +26,32 @@ struct DialogState {
     HFONT          hFont;
     HFONT          hBoldFont;
     HFONT          hTitleFont;
+    std::vector<TodoItem>* todos;       // pointer to g_todos in main
+    std::vector<TodoItem>  todoCopy;    // working copy for editing
 };
+
+// Helper: refresh the TODO listbox from todoCopy
+static void RefreshTodoListbox(HWND hDlg, const std::vector<TodoItem>& items) {
+    HWND hList = GetDlgItem(hDlg, IDC_TODO_LISTBOX);
+    if (!hList) return;
+    SendMessageW(hList, LB_RESETCONTENT, 0, 0);
+    for (const auto& item : items) {
+        std::wstring display = (item.done ? L"\x2713  " : L"\x25CB  ");
+        display += item.text;
+        SendMessageW(hList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(display.c_str()));
+    }
+}
+
+// Helper: enable/disable TODO controls based on checkbox
+static void EnableTodoControls(HWND hDlg, bool enabled) {
+    EnableWindow(GetDlgItem(hDlg, IDC_TODO_LISTBOX), enabled);
+    EnableWindow(GetDlgItem(hDlg, IDC_TODO_INPUT), enabled);
+    EnableWindow(GetDlgItem(hDlg, IDC_BTN_TODO_ADD), enabled);
+    EnableWindow(GetDlgItem(hDlg, IDC_BTN_TODO_REMOVE), enabled);
+    EnableWindow(GetDlgItem(hDlg, IDC_BTN_TODO_CHECK), enabled);
+    EnableWindow(GetDlgItem(hDlg, IDC_TODO_SIZE_SLIDER), enabled);
+    EnableWindow(GetDlgItem(hDlg, IDC_TODO_STYLE_COMBO), enabled);
+}
 
 static const COLORREF DARK_BG     = RGB(24, 24, 32);
 static const COLORREF DARK_GROUP  = RGB(32, 32, 44);
@@ -93,6 +118,9 @@ static void UpdateSliderLabels(HWND hDlg, const ClockSettings& s) {
 
     swprintf(buf, 16, L"%d", s.glowIntensity);
     SetDlgItemTextW(hDlg, IDC_GLOW_VALUE, buf);
+
+    swprintf(buf, 16, L"%d px", s.todoFontSize > 0 ? s.todoFontSize : 20);
+    SetDlgItemTextW(hDlg, IDC_TODO_SIZE_VALUE, buf);
 }
 
 // ── Populate controls from settings ──
@@ -110,6 +138,7 @@ static void SettingsToControls(HWND hDlg, const ClockSettings& s) {
     CheckDlgButton(hDlg, IDC_CHECK_AUTOSTART, s.autoStart ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hDlg, IDC_CHECK_SNAP, s.snapToEdges ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(hDlg, IDC_CHECK_HIDE_ICONS, s.hideDesktopIcons ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(hDlg, IDC_CHECK_TODO_ENABLED, s.todoEnabled ? BST_CHECKED : BST_UNCHECKED);
 
     // Font combo
     HWND hFontCombo = GetDlgItem(hDlg, IDC_FONT_COMBO);
@@ -133,8 +162,19 @@ static void SettingsToControls(HWND hDlg, const ClockSettings& s) {
     SendDlgItemMessageW(hDlg, IDC_DATE_SIZE_SLIDER, TBM_SETPOS, TRUE, s.dateFontSize);
     SendDlgItemMessageW(hDlg, IDC_OPACITY_SLIDER, TBM_SETPOS, TRUE, s.bgAlpha);
     SendDlgItemMessageW(hDlg, IDC_GLOW_SLIDER, TBM_SETPOS, TRUE, s.glowIntensity);
+    SendDlgItemMessageW(hDlg, IDC_TODO_SIZE_SLIDER, TBM_SETPOS, TRUE, s.todoFontSize > 0 ? s.todoFontSize : 20);
+
+    // Card style combo
+    HWND hStyleCombo = GetDlgItem(hDlg, IDC_TODO_STYLE_COMBO);
+    if (hStyleCombo) {
+        int curSel = std::max(0, std::min(2, s.todoStyle));
+        SendMessageW(hStyleCombo, CB_SETCURSEL, curSel, 0);
+    }
 
     UpdateSliderLabels(hDlg, s);
+
+    // TODO controls
+    EnableTodoControls(hDlg, s.todoEnabled);
 }
 
 // ── Read controls into settings ──
@@ -148,6 +188,7 @@ static void ControlsToSettings(HWND hDlg, ClockSettings& s) {
     s.autoStart    = IsDlgButtonChecked(hDlg, IDC_CHECK_AUTOSTART) == BST_CHECKED;
     s.snapToEdges  = IsDlgButtonChecked(hDlg, IDC_CHECK_SNAP) == BST_CHECKED;
     s.hideDesktopIcons = IsDlgButtonChecked(hDlg, IDC_CHECK_HIDE_ICONS) == BST_CHECKED;
+    s.todoEnabled  = IsDlgButtonChecked(hDlg, IDC_CHECK_TODO_ENABLED) == BST_CHECKED;
 
     // Font
     HWND hFontCombo = GetDlgItem(hDlg, IDC_FONT_COMBO);
@@ -163,62 +204,101 @@ static void ControlsToSettings(HWND hDlg, ClockSettings& s) {
     s.dateFontSize  = static_cast<int>(SendDlgItemMessageW(hDlg, IDC_DATE_SIZE_SLIDER, TBM_GETPOS, 0, 0));
     s.bgAlpha       = static_cast<int>(SendDlgItemMessageW(hDlg, IDC_OPACITY_SLIDER, TBM_GETPOS, 0, 0));
     s.glowIntensity = static_cast<int>(SendDlgItemMessageW(hDlg, IDC_GLOW_SLIDER, TBM_GETPOS, 0, 0));
+    s.todoFontSize  = static_cast<int>(SendDlgItemMessageW(hDlg, IDC_TODO_SIZE_SLIDER, TBM_GETPOS, 0, 0));
+
+    HWND hStyleCombo = GetDlgItem(hDlg, IDC_TODO_STYLE_COMBO);
+    if (hStyleCombo) {
+        int sIdx = static_cast<int>(SendMessageW(hStyleCombo, CB_GETCURSEL, 0, 0));
+        if (sIdx != CB_ERR) {
+            s.todoStyle = sIdx;
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────
 // Dialog WndProc & Preview Canvas
 // ────────────────────────────────────────────────────────────────────
 static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    if (msg == WM_ERASEBKGND) {
+        return 1;
+    }
+
     if (msg == WM_PAINT) {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         
         RECT rc;
         GetClientRect(hwnd, &rc);
-        
-        Gdiplus::Graphics graphics(hdc);
-        
-        // Draw wallpaper background
-        WCHAR wallpaper[MAX_PATH];
-        bool drewWallpaper = false;
-        if (SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaper, 0)) {
-            Gdiplus::Image bgImage(wallpaper);
-            if (bgImage.GetLastStatus() == Gdiplus::Ok) {
-                // scale to cover
-                float imgW = static_cast<float>(bgImage.GetWidth());
-                float imgH = static_cast<float>(bgImage.GetHeight());
-                float scale = (std::max)(static_cast<float>(rc.right) / imgW, static_cast<float>(rc.bottom) / imgH);
-                float drawW = imgW * scale;
-                float drawH = imgH * scale;
-                float drawX = (rc.right - drawW) / 2.0f;
-                float drawY = (rc.bottom - drawH) / 2.0f;
-                
-                graphics.DrawImage(&bgImage, drawX, drawY, drawW, drawH);
-                drewWallpaper = true;
+        int clientW = rc.right - rc.left;
+        int clientH = rc.bottom - rc.top;
+
+        if (clientW > 0 && clientH > 0) {
+            // Double-buffer offscreen bitmap
+            Gdiplus::Bitmap memBmp(clientW, clientH, PixelFormat32bppARGB);
+            Gdiplus::Graphics memGfx(&memBmp);
+            memGfx.SetSmoothingMode(Gdiplus::SmoothingModeHighQuality);
+            memGfx.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+            memGfx.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+
+            // Draw wallpaper background
+            WCHAR wallpaper[MAX_PATH];
+            bool drewWallpaper = false;
+            if (SystemParametersInfoW(SPI_GETDESKWALLPAPER, MAX_PATH, wallpaper, 0)) {
+                Gdiplus::Image bgImage(wallpaper);
+                if (bgImage.GetLastStatus() == Gdiplus::Ok) {
+                    float imgW = static_cast<float>(bgImage.GetWidth());
+                    float imgH = static_cast<float>(bgImage.GetHeight());
+                    float scale = (std::max)(static_cast<float>(clientW) / imgW, static_cast<float>(clientH) / imgH);
+                    float drawW = imgW * scale;
+                    float drawH = imgH * scale;
+                    float drawX = (clientW - drawW) / 2.0f;
+                    float drawY = (clientH - drawH) / 2.0f;
+                    
+                    memGfx.DrawImage(&bgImage, drawX, drawY, drawW, drawH);
+                    drewWallpaper = true;
+                }
             }
-        }
-        
-        if (!drewWallpaper) {
-            graphics.Clear(Gdiplus::Color(255, 30, 30, 30));
-        }
-        
-        // Draw the clock using workingCopy settings
-        DialogState* state = reinterpret_cast<DialogState*>(GetWindowLongPtrW(GetParent(hwnd), GWLP_USERDATA));
-        if (state) {
-            ClockRenderer previewRenderer;
-            previewRenderer.Initialize(hwnd);
-            previewRenderer.UpdateSettings(state->workingCopy);
             
-            int w = 0, h = 0;
-            previewRenderer.GetWindowSize(w, h);
+            if (!drewWallpaper) {
+                memGfx.Clear(Gdiplus::Color(255, 22, 24, 32));
+            }
             
-            Gdiplus::Bitmap bmp(w, h, PixelFormat32bppARGB);
-            Gdiplus::Graphics bmpGfx(&bmp);
-            previewRenderer.RenderToGraphics(bmpGfx, true);
-            
-            int x = (rc.right - w) / 2;
-            int y = (rc.bottom - h) / 2;
-            graphics.DrawImage(&bmp, x, y, w, h);
+            // Draw the clock using workingCopy settings
+            DialogState* state = reinterpret_cast<DialogState*>(GetWindowLongPtrW(GetParent(hwnd), GWLP_USERDATA));
+            if (state) {
+                ClockRenderer previewRenderer;
+                previewRenderer.Initialize(hwnd);
+                previewRenderer.UpdateSettings(state->workingCopy);
+                
+                int w = 0, h = 0;
+                previewRenderer.GetWindowSize(w, h);
+                
+                if (w > 0 && h > 0) {
+                    Gdiplus::Bitmap bmp(w, h, PixelFormat32bppARGB);
+                    Gdiplus::Graphics bmpGfx(&bmp);
+                    previewRenderer.RenderToGraphics(bmpGfx, true);
+                    
+                    // Proportional scale to fit nicely in preview panel without clipping
+                    float maxAllowedW = clientW * 0.86f;
+                    float maxAllowedH = clientH * 0.50f;
+                    float scaleFactor = 1.0f;
+                    if (static_cast<float>(w) > maxAllowedW || static_cast<float>(h) > maxAllowedH) {
+                        scaleFactor = (std::min)(maxAllowedW / static_cast<float>(w),
+                                                 maxAllowedH / static_cast<float>(h));
+                    }
+                    
+                    float finalW = static_cast<float>(w) * scaleFactor;
+                    float finalH = static_cast<float>(h) * scaleFactor;
+                    float x = (clientW - finalW) / 2.0f;
+                    float y = (clientH - finalH) / 2.0f;
+                    
+                    memGfx.DrawImage(&bmp, x, y, finalW, finalH);
+                }
+            }
+
+            // Blit offscreen buffer directly to screen DC
+            Gdiplus::Graphics screenGfx(hdc);
+            screenGfx.DrawImage(&memBmp, 0, 0);
         }
         
         EndPaint(hwnd, &ps);
@@ -227,11 +307,18 @@ static LRESULT CALLBACK PreviewWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+static HWND s_hSettingsDlg = nullptr;
+
+HWND GetSettingsDialogHwnd() {
+    return s_hSettingsDlg;
+}
+
 static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM lParam) {
     DialogState* state = reinterpret_cast<DialogState*>(GetWindowLongPtrW(hDlg, GWLP_USERDATA));
 
     switch (msg) {
     case WM_CREATE: {
+        s_hSettingsDlg = hDlg;
         auto* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
         state = reinterpret_cast<DialogState*>(cs->lpCreateParams);
         SetWindowLongPtrW(hDlg, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
@@ -352,6 +439,44 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
         MakeCtrl(hDlg, L"BUTTON", L"Hide desktop icons", BS_AUTOCHECKBOX, lm + 130, y, 160, 20, IDC_CHECK_HIDE_ICONS, hf);
         y += 32;
 
+        // ── TODO List section ──
+        MakeCtrl(hDlg, L"STATIC", L"TODO LIST", WS_VISIBLE | SS_LEFT, lm, y, cw, 16, 0, htf);
+        y += 22;
+        MakeCtrl(hDlg, L"BUTTON", L"Enable TODO widget", BS_AUTOCHECKBOX, lm, y, 180, 20, IDC_CHECK_TODO_ENABLED, hf);
+        y += 26;
+        // Listbox for TODO items
+        MakeCtrl(hDlg, L"LISTBOX", L"",
+            LBS_NOTIFY | LBS_NOINTEGRALHEIGHT | WS_VSCROLL | WS_BORDER,
+            lm, y, cw, 90, IDC_TODO_LISTBOX, hf);
+        SetWindowTheme(GetDlgItem(hDlg, IDC_TODO_LISTBOX), L"", L"");
+        y += 94;
+        // Input + Add/Remove/Check buttons
+        MakeCtrl(hDlg, L"EDIT", L"",
+            ES_AUTOHSCROLL | WS_BORDER,
+            lm, y, cw - 96, 24, IDC_TODO_INPUT, hf);
+        SetWindowTheme(GetDlgItem(hDlg, IDC_TODO_INPUT), L"", L"");
+        MakeCtrl(hDlg, L"BUTTON", L"+", BS_PUSHBUTTON, lm + cw - 92, y, 28, 24, IDC_BTN_TODO_ADD, hbf);
+        MakeCtrl(hDlg, L"BUTTON", L"\x2212", BS_PUSHBUTTON, lm + cw - 62, y, 28, 24, IDC_BTN_TODO_REMOVE, hf);
+        MakeCtrl(hDlg, L"BUTTON", L"\x2713", BS_PUSHBUTTON, lm + cw - 32, y, 28, 24, IDC_BTN_TODO_CHECK, hf);
+        y += 30;
+
+        // Task Size slider
+        MakeCtrl(hDlg, L"STATIC", L"Task Size:", WS_VISIBLE | SS_LEFT, lm, y + 3, 70, 16, 0, hf);
+        MakeCtrl(hDlg, TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS,
+                 lm + 75, y, cw - 130, 24, IDC_TODO_SIZE_SLIDER, hf);
+        SendDlgItemMessageW(hDlg, IDC_TODO_SIZE_SLIDER, TBM_SETRANGE, TRUE, MAKELONG(14, 45));
+        MakeCtrl(hDlg, L"STATIC", L"", WS_VISIBLE | SS_RIGHT, W - lm - 50, y + 3, 50, 16, IDC_TODO_SIZE_VALUE, hf);
+        y += 30;
+
+        // Card Style dropdown
+        MakeCtrl(hDlg, L"STATIC", L"Card Style:", WS_VISIBLE | SS_LEFT, lm, y + 3, 70, 16, 0, hf);
+        HWND hStyleCombo = MakeCtrl(hDlg, L"COMBOBOX", L"",
+            CBS_DROPDOWNLIST | WS_VSCROLL, lm + 75, y, cw - 75, 120, IDC_TODO_STYLE_COMBO, hf);
+        SendMessageW(hStyleCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Clock Matched (Fill)"));
+        SendMessageW(hStyleCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Frosted Glass"));
+        SendMessageW(hStyleCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"Transparent / Borderless"));
+        y += 34;
+
         // ── Alignment section ──
         MakeCtrl(hDlg, L"STATIC", L"SNAP ALIGNMENT", WS_VISIBLE | SS_LEFT, lm, y, cw, 16, 0, htf);
         MakeCtrl(hDlg, L"BUTTON", L"\x2196", BS_PUSHBUTTON, W - lm - 100, y - 4, 22, 22, IDC_ALIGN_TL, hf);
@@ -373,6 +498,10 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
 
         // ── Populate controls ──
         SettingsToControls(hDlg, state->workingCopy);
+
+        // ── Populate TODO listbox ──
+        RefreshTodoListbox(hDlg, state->todoCopy);
+
         return 0;
     }
 
@@ -385,6 +514,7 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
         HWND hPreview = GetDlgItem(hDlg, 4000);
         if (hPreview) {
             SetWindowPos(hPreview, nullptr, leftPaneW, 0, w - leftPaneW, h - 50, SWP_NOZORDER);
+            InvalidateRect(hPreview, nullptr, TRUE);
         }
         
         int btnW = 80, btnH = 30;
@@ -483,6 +613,8 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
             SendDlgItemMessageW(hDlg, IDC_OPACITY_SLIDER, TBM_GETPOS, 0, 0));
         state->workingCopy.glowIntensity = static_cast<int>(
             SendDlgItemMessageW(hDlg, IDC_GLOW_SLIDER, TBM_GETPOS, 0, 0));
+        state->workingCopy.todoFontSize = static_cast<int>(
+            SendDlgItemMessageW(hDlg, IDC_TODO_SIZE_SLIDER, TBM_GETPOS, 0, 0));
         UpdateSliderLabels(hDlg, state->workingCopy);
         return 0;
     }
@@ -491,7 +623,7 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
         if (!state) break;
         int id = LOWORD(wParam);
 
-        if (HIWORD(wParam) == CBN_SELCHANGE && id == IDC_FONT_COMBO) {
+        if (HIWORD(wParam) == CBN_SELCHANGE && (id == IDC_FONT_COMBO || id == IDC_TODO_STYLE_COMBO)) {
             ControlsToSettings(hDlg, state->workingCopy);
             InvalidateRect(GetDlgItem(hDlg, 4000), nullptr, FALSE);
             return 0;
@@ -507,7 +639,8 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
         case IDC_CHECK_CLICKTHRU:
         case IDC_CHECK_AUTOSTART:
         case IDC_CHECK_SNAP:
-        case IDC_CHECK_HIDE_ICONS: {
+        case IDC_CHECK_HIDE_ICONS:
+        case IDC_CHECK_TODO_ENABLED: {
             ControlsToSettings(hDlg, state->workingCopy);
             InvalidateRect(GetDlgItem(hDlg, 4000), nullptr, FALSE);
             if (id == IDC_CHECK_HIDE_ICONS) {
@@ -515,6 +648,9 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
                     MessageBoxW(hDlg, L"Warning: This will hide your desktop icons while the clock is running. They will be restored when the clock exits.",
                                 L"Hide Desktop Icons", MB_ICONWARNING | MB_OK);
                 }
+            }
+            if (id == IDC_CHECK_TODO_ENABLED) {
+                EnableTodoControls(hDlg, state->workingCopy.todoEnabled);
             }
             return 0;
         }
@@ -545,6 +681,48 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
             return 0;
         }
 
+        // ── TODO list buttons ──
+        case IDC_BTN_TODO_ADD: {
+            wchar_t buf[256] = {};
+            GetDlgItemTextW(hDlg, IDC_TODO_INPUT, buf, 256);
+            std::wstring text(buf);
+            // Trim whitespace
+            while (!text.empty() && text.back() == L' ') text.pop_back();
+            while (!text.empty() && text.front() == L' ') text.erase(text.begin());
+            if (!text.empty() && state->todoCopy.size() < 20) {
+                TodoItem item;
+                item.text = text;
+                item.done = false;
+                state->todoCopy.push_back(std::move(item));
+                RefreshTodoListbox(hDlg, state->todoCopy);
+                SetDlgItemTextW(hDlg, IDC_TODO_INPUT, L"");
+                InvalidateRect(GetDlgItem(hDlg, 4000), nullptr, FALSE);
+            }
+            return 0;
+        }
+        case IDC_BTN_TODO_REMOVE: {
+            HWND hList = GetDlgItem(hDlg, IDC_TODO_LISTBOX);
+            int sel = static_cast<int>(SendMessageW(hList, LB_GETCURSEL, 0, 0));
+            if (sel != LB_ERR && sel < static_cast<int>(state->todoCopy.size())) {
+                state->todoCopy.erase(state->todoCopy.begin() + sel);
+                RefreshTodoListbox(hDlg, state->todoCopy);
+                InvalidateRect(GetDlgItem(hDlg, 4000), nullptr, FALSE);
+            }
+            return 0;
+        }
+        case IDC_BTN_TODO_CHECK: {
+            HWND hList = GetDlgItem(hDlg, IDC_TODO_LISTBOX);
+            int sel = static_cast<int>(SendMessageW(hList, LB_GETCURSEL, 0, 0));
+            if (sel != LB_ERR && sel < static_cast<int>(state->todoCopy.size())) {
+                state->todoCopy[sel].done = !state->todoCopy[sel].done;
+                RefreshTodoListbox(hDlg, state->todoCopy);
+                // Re-select the same index
+                SendMessageW(hList, LB_SETCURSEL, sel, 0);
+                InvalidateRect(GetDlgItem(hDlg, 4000), nullptr, FALSE);
+            }
+            return 0;
+        }
+
         case IDC_BTN_TEXT_COLOR: {
             COLORREF c = PickColor(hDlg, state->workingCopy.textColor);
             state->workingCopy.textColor = c;
@@ -570,6 +748,8 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
         case IDC_BTN_OK:
             ControlsToSettings(hDlg, state->workingCopy);
             *(state->settings) = state->workingCopy;
+            if (state->todos) *(state->todos) = state->todoCopy;
+            SaveTodos(state->todoCopy);
             state->changed = true;
             DestroyWindow(hDlg);
             return 0;
@@ -577,6 +757,8 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
         case IDC_BTN_APPLY:
             ControlsToSettings(hDlg, state->workingCopy);
             *(state->settings) = state->workingCopy;
+            if (state->todos) *(state->todos) = state->todoCopy;
+            SaveTodos(state->todoCopy);
             state->changed = true;
             // Send message to main window to update immediately
             PostMessageW(GetParent(hDlg), WM_SETTINGS_CHANGED, 0, 0);
@@ -604,8 +786,17 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
             DeleteObject(state->hBoldFont);
             DeleteObject(state->hTitleFont);
         }
+        s_hSettingsDlg = nullptr;
         PostQuitMessage(0);
         return 0;
+
+    case WM_USER + 101: {
+        if (state && state->todos) {
+            state->todoCopy = *(state->todos);
+            RefreshTodoListbox(hDlg, state->todoCopy);
+        }
+        return 0;
+    }
 
     case WM_CLOSE:
         DestroyWindow(hDlg);
@@ -618,7 +809,7 @@ static LRESULT CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
 // ────────────────────────────────────────────────────────────────────
 // Public API
 // ────────────────────────────────────────────────────────────────────
-bool ShowSettingsDialog(HWND parentHwnd, ClockSettings& settings) {
+bool ShowSettingsDialog(HWND parentHwnd, ClockSettings& settings, std::vector<TodoItem>* todos) {
     // Ensure common controls are loaded
     INITCOMMONCONTROLSEX icc = {};
     icc.dwSize = sizeof(icc);
@@ -630,6 +821,7 @@ bool ShowSettingsDialog(HWND parentHwnd, ClockSettings& settings) {
     if (!previewRegistered) {
         WNDCLASSEXW pwc = {};
         pwc.cbSize = sizeof(pwc);
+        pwc.style = CS_HREDRAW | CS_VREDRAW;
         pwc.lpfnWndProc = PreviewWndProc;
         pwc.hInstance = GetModuleHandleW(nullptr);
         pwc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
@@ -663,12 +855,16 @@ bool ShowSettingsDialog(HWND parentHwnd, ClockSettings& settings) {
     state.hFont       = nullptr;
     state.hBoldFont   = nullptr;
     state.hTitleFont  = nullptr;
+    state.todos       = todos;
+    if (todos) {
+        state.todoCopy = *todos;
+    }
 
-    // Calculate dialog position centered on screen
-    int dlgW = 900;
-    int dlgH = 650;
+    // Calculate dialog position centered on screen (clamp to screen dimensions)
     int screenW = GetSystemMetrics(SM_CXSCREEN);
     int screenH = GetSystemMetrics(SM_CYSCREEN);
+    int dlgW = (std::min)(900, screenW - 40);
+    int dlgH = (std::min)(860, screenH - 60);
     int dlgX = (screenW - dlgW) / 2;
     int dlgY = (screenH - dlgH) / 2;
 

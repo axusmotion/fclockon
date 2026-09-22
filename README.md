@@ -16,7 +16,7 @@ A beautiful, highly customizable, and lightweight open-source desktop clock widg
 - **Ultra Lightweight**: A standalone portable executable (~600 KB) with minimal CPU and RAM usage.
 
 ## How to Run
-1. Download the `WindowsClock.exe` from the latest release (or build it yourself).
+1. Download `FClockOn.exe` from the latest release (or build it yourself).
 2. Double-click the executable to run it.
 3. The clock will appear on your desktop. A tray icon will also appear in your taskbar.
 4. **Double-click the clock** or right-click the tray icon and select **Settings** to customize it.
@@ -39,7 +39,7 @@ This project uses LLVM MinGW and PowerShell for building to ensure a lightweight
    ```powershell
    .\build.ps1
    ```
-3. The compiled `WindowsClock.exe` will be generated in the root directory.
+3. The compiled `FClockOn.exe` will be generated in the root directory.
 
 ## License
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

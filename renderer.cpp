@@ -263,6 +263,7 @@ void ClockRenderer::RenderToGraphics(Gdiplus::Graphics& graphics, bool clearBack
                  textCol, glowCol, m_settings.glowIntensity);
 
     // ── Draw date ──
+    float contentBottomY = timeY + timeRect.Height;
     if (!dateStr.empty()) {
         float dateY = timeY + timeRect.Height + 4.0f;
 
@@ -282,6 +283,10 @@ void ClockRenderer::RenderToGraphics(Gdiplus::Graphics& graphics, bool clearBack
                      Gdiplus::PointF(0, dateY),
                      dateTextCol, dateGlowCol,
                      (std::max)(m_settings.glowIntensity / 2, 1));
+
+        Gdiplus::RectF dateRect;
+        graphics.MeasureString(dateStr.c_str(), -1, &dateFont, Gdiplus::PointF(0, 0), &dateRect);
+        contentBottomY = dateY + dateRect.Height;
     }
 }
 
@@ -320,3 +325,5 @@ void ClockRenderer::Render() {
     DeleteDC(hdcMem);
     ReleaseDC(nullptr, hdcScreen);
 }
+
+

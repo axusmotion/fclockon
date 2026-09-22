@@ -27,13 +27,13 @@ if (-not (Test-Path $GPP)) {
 }
 
 Write-Host "========================================"  -ForegroundColor Cyan
-Write-Host "  Building Windows Clock Widget..."       -ForegroundColor Cyan
+Write-Host "  Building FClockOn Widget..."            -ForegroundColor Cyan
 Write-Host "========================================"  -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Compiler: $GPP" -ForegroundColor DarkGray
 
 $srcDir = $PSScriptRoot
-$outExe = Join-Path $srcDir "WindowsClock.exe"
+$outExe = Join-Path $srcDir "FClockOn.exe"
 $resObj = Join-Path $srcDir "resource.o"
 
 # -- Step 1: Compile resource file --
@@ -52,6 +52,7 @@ $sourceFiles = @(
     (Join-Path $srcDir "main.cpp"),
     (Join-Path $srcDir "settings.cpp"),
     (Join-Path $srcDir "renderer.cpp"),
+    (Join-Path $srcDir "todo_renderer.cpp"),
     (Join-Path $srcDir "tray_icon.cpp"),
     (Join-Path $srcDir "settings_dialog.cpp"),
     $resObj

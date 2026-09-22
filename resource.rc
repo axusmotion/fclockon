@@ -18,12 +18,12 @@ BEGIN
     BEGIN
         BLOCK "040904B0"
         BEGIN
-            VALUE "CompanyName",      "Windows Clock Widget"
-            VALUE "FileDescription",  "Desktop Clock Widget"
+            VALUE "CompanyName",      "FClockOn"
+            VALUE "FileDescription",  "FClockOn - Desktop Clock & Tasks Widget"
             VALUE "FileVersion",      "1.0.0.0"
-            VALUE "InternalName",     "WindowsClock"
-            VALUE "OriginalFilename", "WindowsClock.exe"
-            VALUE "ProductName",      "Windows Clock Widget"
+            VALUE "InternalName",     "FClockOn"
+            VALUE "OriginalFilename", "FClockOn.exe"
+            VALUE "ProductName",      "FClockOn"
             VALUE "ProductVersion",   "1.0.0.0"
         END
     END

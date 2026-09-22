@@ -15,7 +15,7 @@ void TrayIcon::Create(HWND hwnd, HINSTANCE hInstance) {
     g_nid.uFlags           = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g_nid.uCallbackMessage = WM_TRAYICON;
     g_nid.hIcon            = LoadIconW(nullptr, IDI_APPLICATION);
-    wcscpy_s(g_nid.szTip, L"Windows Clock Widget");
+    wcscpy_s(g_nid.szTip, L"FClockOn");
 
     Shell_NotifyIconW(NIM_ADD, &g_nid);
 
@@ -51,6 +51,18 @@ void TrayIcon::ShowContextMenu(HWND hwnd, const ClockSettings& settings) {
     AppendMenuW(hMenu, MF_STRING, ID_TRAY_SETTINGS, L"⚙  Settings...");
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hPresets), L"🎨  Presets");
+
+    if (settings.todoEnabled) {
+        HMENU hTodoStyle = CreatePopupMenu();
+        AppendMenuW(hTodoStyle, MF_STRING | (settings.todoStyle == 0 ? MF_CHECKED : 0),
+                    ID_TRAY_TODO_STYLE_FILL, L"Clock Matched (Fill)");
+        AppendMenuW(hTodoStyle, MF_STRING | (settings.todoStyle == 1 ? MF_CHECKED : 0),
+                    ID_TRAY_TODO_STYLE_GLASS, L"Frosted Glass");
+        AppendMenuW(hTodoStyle, MF_STRING | (settings.todoStyle == 2 ? MF_CHECKED : 0),
+                    ID_TRAY_TODO_STYLE_TRANS, L"Transparent / Borderless");
+        AppendMenuW(hMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(hTodoStyle), L"📋  Tasks Card Style");
+    }
+
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
 
     // Toggle items
