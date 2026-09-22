@@ -1,12 +1,16 @@
 # FClockOn (Windows Clock Widget)
 
-![Desktop Clock](assets/screenshot_desktop.jpg)
+![Desktop Clock & To-Do Widget](assets/screenshot_desktop.jpg)
 
-![Settings Dialog](assets/screenshot_settings.png)
+![Settings Dialog](assets/screenshot_settings.jpg)
 
-A beautiful, highly customizable, and lightweight open-source desktop clock widget for Windows, built with C++ and GDI+.
+![Frosted Glass Styling](assets/screenshot_frosted_glass.jpg)
+
+A beautiful, highly customizable, and lightweight open-source desktop clock and widget for Windows, built with C++ and GDI+.
 
 ## Features
+- **Integrated To-Do Widget**: Built-in minimalist desktop task manager with interactive completion checkboxes, task counters, and editable task lists.
+- **Frosted Glass & Borderless Styles**: Choose between a modern translucent frosted glass card or a clean borderless transparent aesthetic.
 - **Highly Customizable**: Change fonts, sizes, text color, glow color, and background opacity.
 - **Dynamic Snap Alignment**: Drag to the edges of your screen or use the quick-align arrows in the settings to snap the clock perfectly to the corners.
 - **Live Preview Settings**: A two-pane settings dialog with a real-time preview canvas that shows your active wallpaper.
